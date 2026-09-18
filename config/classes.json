@@ -1,0 +1,5 @@
+{
+	"TEntityMetaModule": "Belisoful\\Prado\\Util\\Meta\\TEntityMetaModule",
+	"TUserMetaModule": "Belisoful\\Prado\\Util\\Meta\\TUserMetaModule",
+	"TMetaBehavior": "Belisoful\\Prado\\Util\\Meta\\TMetaBehavior"
+}

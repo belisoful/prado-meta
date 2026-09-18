@@ -1,0 +1,4 @@
+meta_entity_id_required				= Meta storage in '{0}' requires a non-empty entity id.
+meta_key_required					= Meta storage in '{0}' requires a non-empty key.
+meta_table_nonexistent				= The meta table '{0}' does not exist and AutoCreateTable is false.
+meta_serializer_invalid				= '{0}' is not a meta serializer; use 'php' or 'json'.
