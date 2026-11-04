@@ -30,6 +30,7 @@
 	],
 	"require": {
 		"php": ">=8.2.0",
+		"ext-pdo": "*",
 		"pradosoft/prado": "^4.4@dev"
 	},
 	"require-dev": {

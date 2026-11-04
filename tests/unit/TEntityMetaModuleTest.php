@@ -1,6 +1,7 @@
 <?php
 
 use Belisoful\Prado\Util\Meta\TEntityMetaModule;
+use Prado\Exceptions\TDbException;
 use Prado\Exceptions\TConfigurationException;
 use Prado\Exceptions\TInvalidDataValueException;
 use Prado\Exceptions\TInvalidOperationException;
@@ -124,7 +125,7 @@ class TEntityMetaModuleTest extends PHPUnit\Framework\TestCase
 
 	public function testObjectsRoundTripThroughThePhpSerializer()
 	{
-		$module = MetaTestTools::createEntityModule();
+		$module = MetaTestTools::createEntityModule(['AllowedClasses' => 'stdClass']);
 		$module->setMeta('7', 'point', (object) ['x' => 1, 'y' => 2]);
 		$module->flushMetaCache();
 
@@ -315,5 +316,333 @@ class TEntityMetaModuleTest extends PHPUnit\Framework\TestCase
 		$module = MetaTestTools::createEntityModule();
 		$module->setMeta(7, 'colour', 'green');
 		$this->assertSame('green', $module->getMeta('7', 'colour'));
+	}
+
+	/**
+	 * A value written into the table by some other route must not choose what is instantiated
+	 * when it is read.
+	 */
+	public function testObjectsAreNotRestoredByDefault()
+	{
+		$connection = MetaTestTools::createConnection();
+		$module = MetaTestTools::createEntityModule([], $connection);
+		$module->setMeta('7', 'list', [1]);
+		$connection->createCommand("UPDATE entity_meta SET meta_value = 'O:8:\"stdClass\":1:{s:1:\"p\";i:1;}'")->execute();
+		$module->flushMetaCache();
+
+		$this->assertInstanceOf(__PHP_Incomplete_Class::class, $module->getMeta('7', 'list'));
+		$this->assertFalse($module->getAllowedClasses());
+	}
+
+	public function testAllowedClassesAcceptsTheUsualForms()
+	{
+		$cases = [
+			['*', true],
+			['true', true],
+			[true, true],
+			['', false],
+			['false', false],
+			[false, false],
+			[[], false],
+			['stdClass, \\ArrayObject', ['stdClass', 'ArrayObject']],
+			[['stdClass', ' '], ['stdClass']],
+		];
+		foreach ($cases as [$value, $expected]) {
+			$module = new TestEntityMetaModule();
+			$module->setAllowedClasses($value);
+			$this->assertSame($expected, $module->getAllowedClasses(), var_export($value, true));
+		}
+	}
+
+	public function testNonFiniteFloatsRoundTrip()
+	{
+		$module = MetaTestTools::createEntityModule();
+		$module->setMeta('7', 'inf', INF);
+		$module->setMeta('7', 'neg-inf', -INF);
+		$module->setMeta('7', 'nan', NAN);
+		$this->assertNan($module->getMeta('7', 'nan'), 'the cached read');
+		$module->flushMetaCache();
+
+		$this->assertSame(INF, $module->getMeta('7', 'inf'));
+		$this->assertSame(-INF, $module->getMeta('7', 'neg-inf'));
+		$this->assertNan($module->getMeta('7', 'nan'));
+	}
+
+	public function testAValueJsonCannotEncodeIsRefused()
+	{
+		$module = MetaTestTools::createEntityModule(['Serializer' => TEntityMetaModule::SERIALIZE_JSON]);
+		try {
+			$module->setMeta('7', 'bytes', ["a\xB1"]);
+			$this->fail('an array JSON cannot encode was stored');
+		} catch (TInvalidDataValueException $e) {
+			$this->assertStringContainsString("Meta value 'bytes' in 'entity_meta' cannot be encoded as JSON", $e->getMessage());
+		}
+		$this->assertFalse($module->existsMeta('7', 'bytes'), 'nothing was written');
+	}
+
+	public function testCachedAndColdReadsAgree()
+	{
+		// JSON does not restore objects, so the cached read must not either.
+		$module = MetaTestTools::createEntityModule(['Serializer' => TEntityMetaModule::SERIALIZE_JSON]);
+		$module->setMeta('7', 'point', (object) ['x' => 1]);
+		$warm = $module->getMeta('7', 'point');
+		$module->flushMetaCache();
+
+		$this->assertSame(['x' => 1], $warm);
+		$this->assertSame($warm, $module->getMeta('7', 'point'));
+	}
+
+	public function testTheCacheHoldsACopyOfAStoredObject()
+	{
+		$module = MetaTestTools::createEntityModule(['AllowedClasses' => '*']);
+		$point = (object) ['x' => 1];
+		$module->setMeta('7', 'point', $point);
+		$point->x = 99;
+
+		$this->assertSame(1, $module->getMeta('7', 'point')->x, 'changing the object after the write does not change the cached value');
+	}
+
+	public function testChangingTheSerializerKeepsExistingRowsReadable()
+	{
+		$connection = MetaTestTools::createConnection();
+		$php = MetaTestTools::createEntityModule([], $connection);
+		$php->setMeta('7', 'from-php', ['a' => 1]);
+		$json = MetaTestTools::createEntityModule(['Serializer' => TEntityMetaModule::SERIALIZE_JSON], $connection);
+		$json->setMeta('7', 'from-json', ['b' => 2]);
+
+		$this->assertSame(['a' => 1], $json->getMeta('7', 'from-php'));
+		$php->flushMetaCache();
+		$this->assertSame(['b' => 2], $php->getMeta('7', 'from-json'));
+	}
+
+	public function testTheLegacySerializedCodeIsReadWithTheConfiguredSerializer()
+	{
+		$connection = MetaTestTools::createConnection();
+		$php = MetaTestTools::createEntityModule([], $connection);
+		$php->setMeta('7', 'old', 'placeholder');
+		$connection->createCommand("UPDATE entity_meta SET meta_type = 'a', meta_value = '" . serialize(['a' => 1]) . "'")->execute();
+		$php->flushMetaCache();
+		$this->assertSame(['a' => 1], $php->getMeta('7', 'old'));
+
+		$connection->createCommand("UPDATE entity_meta SET meta_value = '{\"a\":1}'")->execute();
+		$json = MetaTestTools::createEntityModule(['Serializer' => TEntityMetaModule::SERIALIZE_JSON], $connection);
+		$this->assertSame(['a' => 1], $json->getMeta('7', 'old'));
+	}
+
+	public function testACorruptSerializedValueReadsAsNull()
+	{
+		// false would look like a stored false; a corrupt row has no value.
+		$connection = MetaTestTools::createConnection();
+		$module = MetaTestTools::createEntityModule([], $connection);
+		$module->setMeta('7', 'list', [1]);
+		$module->setMeta('7', 'tags', ['x']);
+		$connection->createCommand("UPDATE entity_meta SET meta_value = 'garbage'")->execute();
+		$module->flushMetaCache();
+		$this->assertNull($module->getMeta('7', 'list'));
+
+		$json = MetaTestTools::createEntityModule(['Serializer' => TEntityMetaModule::SERIALIZE_JSON], $connection);
+		$connection->createCommand("UPDATE entity_meta SET meta_type = 'j'")->execute();
+		$this->assertNull($json->getMeta('7', 'tags'));
+	}
+
+	public function testARolledBackWriteLeavesTheCache()
+	{
+		$connection = MetaTestTools::createConnection();
+		$module = MetaTestTools::createEntityModule([], $connection);
+		$module->setMeta('7', 'colour', 'green');
+
+		$transaction = $connection->beginTransaction();
+		$module->setMeta('7', 'colour', 'red');
+		$module->setMeta('7', 'size', 3);
+		$this->assertSame('red', $module->getMeta('7', 'colour'));
+		$transaction->rollBack();
+
+		$this->assertSame('green', $module->getMeta('7', 'colour'));
+		$this->assertFalse($module->existsMeta('7', 'size'));
+	}
+
+	public function testACommittedWriteStaysCached()
+	{
+		$connection = MetaTestTools::createConnection();
+		$module = MetaTestTools::createEntityModule([], $connection);
+		$transaction = $connection->beginTransaction();
+		$module->setMeta('7', 'colour', 'red');
+		$transaction->commit();
+
+		MetaTestTools::deleteRowDirectly($module, '7', 'colour');
+		$this->assertSame('red', $module->getMeta('7', 'colour'));
+	}
+
+	public function testATableCreatedInARolledBackTransactionIsCreatedAgain()
+	{
+		$connection = MetaTestTools::createConnection();
+		$module = MetaTestTools::createEntityModule([], $connection);
+		$transaction = $connection->beginTransaction();
+		$module->setMeta('7', 'colour', 'red');
+		$transaction->rollBack();
+
+		$module->setMeta('7', 'colour', 'green');
+		$this->assertSame('green', $module->getMeta('7', 'colour'));
+	}
+
+	public function testAWriteDoesNotSkipTheAutoloadPreload()
+	{
+		$connection = MetaTestTools::createConnection();
+		$seed = MetaTestTools::createEntityModule([], $connection);
+		$seed->setMeta('7', 'a', 'a');
+		$seed->setMeta('7', 'b', 'b');
+
+		$module = MetaTestTools::createEntityModule([], $connection);
+		$module->setMeta('7', 'z', 'z');
+		$module->getMeta('7', 'a');
+		// Had the first read loaded only 'a', 'b' would now come from the emptied table.
+		MetaTestTools::deleteRowDirectly($module, '7', 'b');
+		$this->assertSame('b', $module->getMeta('7', 'b'));
+	}
+
+	public function testAMissingTableIsReportedEveryTime()
+	{
+		$module = MetaTestTools::createEntityModule(['AutoCreateTable' => false]);
+		foreach ([1, 2] as $attempt) {
+			try {
+				$module->getMeta('7', 'colour');
+				$this->fail('a missing table was not reported');
+			} catch (TConfigurationException $e) {
+				$this->assertStringContainsString("The meta table 'entity_meta' does not exist", $e->getMessage(), "attempt {$attempt}");
+			}
+		}
+	}
+
+	public function testAProbeErrorThatIsNotAMissingTableIsThrown()
+	{
+		// The schema does not exist, so this is not "no such table", and creating would not help.
+		$module = MetaTestTools::createEntityModule(['TableName' => 'nosuchschema.entity_meta']);
+		$this->expectException(TDbException::class);
+		$module->getMeta('7', 'colour');
+	}
+
+	public function testAQuotedTableNameIsCreated()
+	{
+		$module = MetaTestTools::createEntityModule(['TableName' => '"post meta"']);
+		$module->setMeta('7', 'colour', 'green');
+		$module->setMeta('7', 'colour', 'blue');
+		$module->flushMetaCache();
+		$this->assertSame(['colour' => 'blue'], $module->getAllMeta('7'));
+	}
+
+	public function testASchemaQualifiedTableNameIsCreated()
+	{
+		$connection = MetaTestTools::createConnection();
+		$connection->createCommand("ATTACH DATABASE ':memory:' AS app")->execute();
+		$module = MetaTestTools::createEntityModule(['TableName' => 'app.post_meta'], $connection);
+		$module->setMeta('7', 'colour', 'green');
+		$module->setMeta('7', 'colour', 'blue');
+		$module->flushMetaCache();
+		$this->assertSame(['colour' => 'blue'], $module->getAllMeta('7'));
+		$this->assertSame(1, (int) $connection->createCommand("SELECT COUNT(*) FROM app.sqlite_master WHERE type = 'index' AND name = 'post_meta_entity_key'")->queryScalar());
+	}
+
+	public function testAutoCreateIsRefusedOnAnUnsupportedDriver()
+	{
+		$module = MetaTestTools::createEntityModule([], null, TestOtherDriverEntityMetaModule::class);
+		try {
+			$module->setMeta('7', 'colour', 'green');
+			$this->fail('a table was created with DDL the driver does not take');
+		} catch (TConfigurationException $e) {
+			$this->assertStringContainsString("cannot be created on the 'odbc' driver", $e->getMessage());
+		}
+	}
+
+	public function testOtherDriversWriteByDeleteThenInsert()
+	{
+		$connection = MetaTestTools::createConnection();
+		// A module closes its connection when it is destroyed, so the creator is kept alive.
+		$creator = MetaTestTools::createEntityModule([], $connection);
+		$creator->getMeta('7', 'colour'); // creates the table
+		$module = MetaTestTools::createEntityModule([], $connection, TestOtherDriverEntityMetaModule::class);
+
+		$module->setMeta('7', 'colour', 'green');
+		$module->setMeta('7', 'colour', 'blue');
+		$this->assertNull($connection->getCurrentTransaction(), 'the write closed its own transaction');
+
+		$transaction = $connection->beginTransaction();
+		$module->setMeta('7', 'size', 3);
+		$this->assertSame($transaction, $connection->getCurrentTransaction(), 'the write joined the open transaction');
+		$transaction->commit();
+
+		$module->flushMetaCache();
+		$this->assertSame(['colour' => 'blue', 'size' => 3], $module->getAllMeta('7'));
+	}
+
+	public function testEntityIdsMustBeStringsOrNumbers()
+	{
+		$module = MetaTestTools::createEntityModule();
+		try {
+			$module->getMeta(['7'], 'colour');
+			$this->fail('an array entity id was accepted');
+		} catch (TInvalidDataValueException $e) {
+			$this->assertStringContainsString('requires an entity id that is a string or a number; array given', $e->getMessage());
+		}
+
+		$id = new class () implements Stringable {
+			public function __toString(): string
+			{
+				return '7';
+			}
+		};
+		$module->setMeta($id, 'colour', 'green');
+		$this->assertSame('green', $module->getMeta(7, 'colour'));
+	}
+
+	public function testANullEntityIdIsEmpty()
+	{
+		$module = MetaTestTools::createEntityModule();
+		$this->expectException(TInvalidDataValueException::class);
+		$this->expectExceptionMessage('requires a non-empty entity id');
+		$module->getMeta(null, 'colour');
+	}
+
+	public function testEntityIdsAndKeysLongerThanTheColumnsAreRefused()
+	{
+		$module = MetaTestTools::createEntityModule();
+		$this->assertSame(128, $module->getMaxEntityIdLength());
+		$this->assertSame(191, $module->getMaxKeyLength());
+		$module->setMeta(str_repeat('é', 128), str_repeat('ü', 191), 'fits');
+
+		try {
+			$module->getMeta(str_repeat('e', 129), 'colour');
+			$this->fail('an entity id longer than the column was accepted');
+		} catch (TInvalidDataValueException $e) {
+			$this->assertStringContainsString('at most 128 characters', $e->getMessage());
+		}
+		try {
+			$module->setMeta('7', str_repeat('k', 192), 'x');
+			$this->fail('a key longer than the column was accepted');
+		} catch (TInvalidDataValueException $e) {
+			$this->assertStringContainsString('a key of at most 191 characters', $e->getMessage());
+		}
+	}
+
+	public function testALengthLimitOfZeroIsNoLimit()
+	{
+		$module = MetaTestTools::createEntityModule(['MaxEntityIdLength' => 0, 'MaxKeyLength' => '0']);
+		$module->setMeta(str_repeat('e', 300), str_repeat('k', 300), 'stored');
+		$this->assertSame('stored', $module->getMeta(str_repeat('e', 300), str_repeat('k', 300)));
+	}
+
+	public function testTheCacheIsDroppedAtTheEndOfEachRequest()
+	{
+		// A module in a long-running server outlives the request; the next one reads afresh.
+		$application = new MetaTestApplication();
+		$module = new TestEntityMetaModuleWithApplication();
+		$module->setTestApplication($application);
+		$module->setTestDbConnection(MetaTestTools::createConnection());
+		$module->init(null);
+
+		$module->setMeta('7', 'colour', 'green');
+		MetaTestTools::deleteRowDirectly($module, '7', 'colour');
+		$this->assertSame('green', $module->getMeta('7', 'colour'));
+		$application->onEndRequest();
+		$this->assertNull($module->getMeta('7', 'colour'));
 	}
 }

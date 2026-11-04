@@ -2,6 +2,12 @@
 # An apostrophe before or after a brace is doubled: ''{0}'' renders the argument in single quotes.
 
 meta_entity_id_required				= Meta storage in ''{0}'' requires a non-empty entity id.
+meta_entity_id_invalid				= Meta storage in ''{0}'' requires an entity id that is a string or a number; {1} given.
+meta_entity_id_too_long				= Meta storage in ''{0}'' takes an entity id of at most {1} characters; ''{2}'' is longer. Raise MaxEntityIdLength, and the column, to store it.
 meta_key_required					= Meta storage in ''{0}'' requires a non-empty key.
+meta_key_too_long					= Meta storage in ''{0}'' takes a key of at most {1} characters; ''{2}'' is longer. Raise MaxKeyLength, and the column, to store it.
+meta_value_unencodable				= Meta value ''{1}'' in ''{0}'' cannot be encoded as JSON: {2}.
+meta_user_guest						= Meta in ''{0}'' cannot be written for a guest user: every anonymous visitor is the same guest, so they would all share it.
 meta_table_nonexistent				= The meta table ''{0}'' does not exist and AutoCreateTable is false.
+meta_table_create_unsupported		= The meta table ''{0}'' cannot be created on the ''{1}'' driver. Create it by hand, with a unique index over the entity and key columns, or use MySQL, PostgreSQL, or SQLite.
 meta_serializer_invalid				= ''{0}'' is not a meta serializer; use 'php' or 'json'.

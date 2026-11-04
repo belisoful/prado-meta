@@ -10,6 +10,15 @@ parameters:
         - tests/test_tools/phpstan-bootstrap.php
     paths:
         - src
+        - tests/unit
+        - tests/test_tools
+    ignoreErrors:
+        # TMetaBehavior gives every IUser these methods at runtime, as a class behavior; the
+        # framework's reflection extensions cannot see a behavior attached by a module's init().
+        -
+            message: '#^Call to an undefined method (Prado\\Security\\TUser|MetaTestUserWithId)::(get|set|unset|exists|getAll)Meta\(\)\.$#'
+            identifier: method.notFound
+            path: tests/*
 
 # PRADO components resolve methods and properties at runtime (behaviors, dynamic events, and
 # the get/set property convention), which PHPStan cannot see on its own. These extensions ship

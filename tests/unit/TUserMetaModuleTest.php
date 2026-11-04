@@ -4,7 +4,9 @@ use Belisoful\Prado\Util\Meta\TMetaBehavior;
 use Prado\Exceptions\TInvalidDataValueException;
 use Prado\Security\IUser;
 use Prado\Security\TUser;
+use Prado\Exceptions\TInvalidOperationException;
 use Prado\TComponent;
+use Prado\Util\TClassBehavior;
 
 require_once(__DIR__ . '/../test_tools/MetaTestTools.php');
 
@@ -63,8 +65,7 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 	public function testUsersGainTheMetaMethods()
 	{
 		$this->createModule();
-		$user = new TUser(MetaTestTools::createUserManager());
-		$user->setName('rayelan');
+		$user = MetaTestTools::createUser('rayelan');
 
 		$user->setMeta('timezone', 'America/Denver');
 		$this->assertSame('America/Denver', $user->getMeta('timezone'));
@@ -79,8 +80,7 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 	public function testUserMetaKeepsItsTypeThroughTheBehavior()
 	{
 		$module = $this->createModule();
-		$user = new TUser(MetaTestTools::createUserManager());
-		$user->setName('rayelan');
+		$user = MetaTestTools::createUser('rayelan');
 
 		$user->setMeta('posts', 12);
 		$user->setMeta('trusted', false);
@@ -97,12 +97,10 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 	public function testMetaIsSeparateFromSessionState()
 	{
 		$this->createModule();
-		$user = new TUser(MetaTestTools::createUserManager());
-		$user->setName('rayelan');
+		$user = MetaTestTools::createUser('rayelan');
 		$user->setMeta('timezone', 'America/Denver');
 
-		$restored = new TUser(MetaTestTools::createUserManager());
-		$restored->setName('rayelan');
+		$restored = MetaTestTools::createUser('rayelan');
 
 		// A second instance of the same user reads the stored value; nothing was carried in the
 		// session to make that work.
@@ -113,11 +111,8 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 	public function testTwoUsersDoNotShareValues()
 	{
 		$this->createModule();
-		$manager = MetaTestTools::createUserManager();
-		$first = new TUser($manager);
-		$first->setName('rayelan');
-		$second = new TUser($manager);
-		$second->setName('hobie');
+		$first = MetaTestTools::createUser('rayelan');
+		$second = MetaTestTools::createUser('hobie');
 
 		$first->setMeta('colour', 'green');
 		$second->setMeta('colour', 'red');
@@ -129,8 +124,7 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 	public function testRowsAreKeyedOnTheUserNameWhenThereIsNoId()
 	{
 		$module = $this->createModule();
-		$user = new TUser(MetaTestTools::createUserManager());
-		$user->setName('rayelan');
+		$user = MetaTestTools::createUser('rayelan');
 
 		$user->setMeta('colour', 'green');
 		$this->assertSame('green', $module->getMeta('rayelan', 'colour'));
@@ -140,8 +134,8 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 	{
 		// An id survives a rename, where rows keyed on the name would be orphaned by one.
 		$module = $this->createModule();
-		$user = new MetaTestUserWithId(MetaTestTools::createUserManager());
-		$user->setName('rayelan');
+		/** @var \MetaTestUserWithId $user */
+		$user = MetaTestTools::createUser('rayelan', MetaTestUserWithId::class);
 		$user->setID('41');
 
 		$user->setMeta('colour', 'green');
@@ -157,8 +151,7 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 		$module = $this->createModule(['BehaviorName' => 'usermeta']);
 		$this->assertSame('usermeta', $module->getBehaviorName());
 
-		$user = new TUser(MetaTestTools::createUserManager());
-		$user->setName('rayelan');
+		$user = MetaTestTools::createUser('rayelan');
 		$this->assertInstanceOf(TMetaBehavior::class, $user->asa('usermeta'));
 	}
 
@@ -170,5 +163,76 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 
 		$this->assertInstanceOf(TMetaBehavior::class, $behavior);
 		$this->assertSame($module, $behavior->getModule());
+	}
+
+	/**
+	 * Every anonymous visitor is the same guest user, so meta written for one would be read by
+	 * all of them.
+	 */
+	public function testAGuestHasNoMeta()
+	{
+		$this->createModule();
+		$guest = new TUser(MetaTestTools::createUserManager());
+		$this->assertTrue($guest->getIsGuest());
+
+		$this->assertSame('fallback', $guest->getMeta('cart', 'fallback'));
+		$this->assertFalse($guest->existsMeta('cart'));
+		$this->assertSame([], $guest->getAllMeta());
+		foreach (['setMeta' => ['cart', 'secret'], 'unsetMeta' => ['cart']] as $method => $args) {
+			try {
+				$guest->$method(...$args);
+				$this->fail("{$method}() wrote for a guest");
+			} catch (TInvalidOperationException $e) {
+				$this->assertStringContainsString("Meta in 'user_meta' cannot be written for a guest user", $e->getMessage());
+			}
+		}
+	}
+
+	public function testASignedInUserNamedLikeTheGuestIsNotAGuest()
+	{
+		$module = $this->createModule();
+		$user = MetaTestTools::createUser('Guest');
+		$user->setMeta('colour', 'green');
+		$this->assertSame('green', $module->getMeta('Guest', 'colour'));
+	}
+
+	public function testInitializingAgainReplacesTheBehavior()
+	{
+		// A second module, or the application booted again in a long-running process.
+		$first = $this->createModule();
+		$second = $this->createModule();
+
+		$user = MetaTestTools::createUser('rayelan');
+		$this->assertSame($second, $user->asa('meta')->getModule());
+		$user->setMeta('colour', 'green');
+		$this->assertSame('green', $second->getMeta('rayelan', 'colour'));
+		$this->assertFalse($first->existsMeta('rayelan', 'colour'));
+	}
+
+	public function testABehaviorOfTheSameNameFromElsewhereIsNotReplaced()
+	{
+		$this->_attached[] = 'claimed';
+		TComponent::attachClassBehavior('claimed', new TClassBehavior(), IUser::class);
+		try {
+			MetaTestTools::createUserModule(['BehaviorName' => 'claimed']);
+			$this->fail('another behavior of the same name was replaced');
+		} catch (TInvalidOperationException $e) {
+			$this->assertStringContainsString("already has a class behavior of 'claimed'", $e->getMessage());
+		}
+	}
+
+	public function testAForeignBehaviorThatTookOverTheNameIsKept()
+	{
+		$this->createModule(['BehaviorName' => 'shared']);
+		TComponent::detachClassBehavior('shared', IUser::class);
+		$foreign = new TClassBehavior();
+		TComponent::attachClassBehavior('shared', $foreign, IUser::class);
+
+		try {
+			$this->createModule(['BehaviorName' => 'shared']);
+			$this->fail('a foreign behavior was replaced');
+		} catch (TInvalidOperationException $e) {
+			$this->assertSame($foreign, MetaTestTools::createUser('rayelan')->asa('shared'));
+		}
 	}
 }

@@ -16,6 +16,8 @@ use Belisoful\Prado\Util\Meta\TUserMetaModule;
 use Prado\Data\TDbConnection;
 use Prado\Security\TUser;
 use Prado\Security\TUserManager;
+use Prado\TApplicationMode;
+use Prado\TComponent;
 
 trait MetaTestConnectionTrait
 {
@@ -46,6 +48,49 @@ class TestEntityMetaModule extends TEntityMetaModule
 class TestUserMetaModule extends TUserMetaModule
 {
 	use MetaTestConnectionTrait;
+}
+
+/** A module that takes its SQLite connection for a driver with no upsert and no DDL of its own. */
+class TestOtherDriverEntityMetaModule extends TEntityMetaModule
+{
+	use MetaTestConnectionTrait;
+
+	protected function getDriverName(): string
+	{
+		return 'odbc';
+	}
+}
+
+/** Stands in for the application: all the module asks of it is an OnEndRequest event. */
+class MetaTestApplication extends TComponent
+{
+	public function getMode()
+	{
+		return TApplicationMode::Debug;
+	}
+
+	public function onEndRequest($param = null)
+	{
+		$this->raiseEvent('OnEndRequest', $this, $param);
+	}
+}
+
+class TestEntityMetaModuleWithApplication extends TEntityMetaModule
+{
+	use MetaTestConnectionTrait;
+
+	private ?MetaTestApplication $_testApplication = null;
+
+	public function setTestApplication(MetaTestApplication $application): void
+	{
+		$this->_testApplication = $application;
+	}
+
+	public function getApplication()
+	{
+		// @phpstan-ignore return.type (a stand-in for the application, by design)
+		return $this->_testApplication;
+	}
 }
 
 /** A user manager is all TUser needs to exist; nothing here authenticates. */
@@ -84,12 +129,14 @@ class MetaTestTools
 
 	/**
 	 * @param array $properties properties to set before init, as name => value
-	 * @return \TestEntityMetaModule an initialized module on a fresh database
+	 * @param null|\Prado\Data\TDbConnection $connection the connection, or null for a fresh database
+	 * @param string $class the module class, one using MetaTestConnectionTrait
+	 * @return \TestEntityMetaModule an initialized module
 	 */
-	public static function createEntityModule(array $properties = []): TestEntityMetaModule
+	public static function createEntityModule(array $properties = [], ?TDbConnection $connection = null, string $class = TestEntityMetaModule::class): TEntityMetaModule
 	{
-		$module = new TestEntityMetaModule();
-		$module->setTestDbConnection(self::createConnection());
+		$module = new $class();
+		$module->setTestDbConnection($connection ?? self::createConnection());
 		self::applyProperties($module, $properties);
 		$module->init(null);
 
@@ -117,6 +164,20 @@ class MetaTestTools
 	public static function createUserManager(): TUserManager
 	{
 		return new MetaTestUserManager();
+	}
+
+	/**
+	 * @param string $name the user name
+	 * @param string $class the user class
+	 * @return \Prado\Security\TUser a signed-in (non-guest) user of that name
+	 */
+	public static function createUser(string $name, string $class = TUser::class): TUser
+	{
+		$user = new $class(self::createUserManager());
+		$user->setName($name);
+		$user->setIsGuest(false);
+
+		return $user;
 	}
 
 	/**

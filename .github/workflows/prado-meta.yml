@@ -8,6 +8,21 @@ on:
     - cron: '17 6 * * 1'
   workflow_dispatch:
 
+env:
+  # The PHP version the single-version jobs use (coverage, the OS jobs and the Composer
+  # extension install); the framework's workflow pins the same one.
+  PHP_VERSION: '8.2'
+
+# The jobs only read the repository; nothing here needs a token that can write.
+permissions:
+  contents: read
+
+# A push to a branch with an open pull request triggers both events; a newer push to the same
+# ref supersedes the run in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   extension:
     name: Extension (PHP ${{ matrix.php-versions }}${{ matrix.dependencies == 'lowest' && ', lowest deps' || '' }})
@@ -25,32 +40,72 @@ jobs:
           - php-versions: '8.2'
             dependencies: 'lowest'
 
+    # The module writes different SQL for MySQL and PostgreSQL than for SQLite; the driver
+    # tests run against both servers here.
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: prado_meta_test
+          MYSQL_DATABASE: prado_meta_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pprado_meta_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: prado_meta_test
+          POSTGRES_DB: prado_meta_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # A missing backend must fail the build instead of silently skipping its tests.
+      META_REQUIRE_BACKENDS: 1
+      META_MYSQL_DSN: "mysql:host=127.0.0.1;port=3306;dbname=prado_meta_test"
+      META_MYSQL_USER: root
+      META_MYSQL_PASSWORD: prado_meta_test
+      META_PGSQL_DSN: "pgsql:host=127.0.0.1;port=5432;dbname=prado_meta_test"
+      META_PGSQL_USER: postgres
+      META_PGSQL_PASSWORD: prado_meta_test
+
     steps:
       - name: Checkout extension
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup PHP, with composer and extensions
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-versions }}
-          extensions: ctype, dom, intl, json, mbstring, pcre, pdo, pdo_sqlite, sqlite3, spl, zlib
+          extensions: ctype, dom, intl, json, mbstring, pcre, pdo, pdo_sqlite, pdo_mysql, pdo_pgsql, sqlite3, spl, zlib
+          # php-cs-fixer and phpstan run from vendor/bin, at the exact versions composer.json
+          # pins, so a tool release cannot change what a build checks.
           tools: cs2pr
           # Xdebug costs a lot of run time, so only the leg that measures coverage gets it.
-          coverage: ${{ matrix.php-versions == '8.3' && matrix.dependencies == 'highest' && 'xdebug' || 'none' }}
+          coverage: ${{ matrix.php-versions == env.PHP_VERSION && matrix.dependencies == 'highest' && 'xdebug' || 'none' }}
 
       - name: Validate composer.json
         run: composer validate --strict
 
       - name: Get composer cache directory
         id: composer-cache
-        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           # composer.lock is not committed, so the key hashes composer.json instead.
           path: ${{ steps.composer-cache.outputs.dir }}
-          key: ${{ runner.os }}-php${{ matrix.php-versions }}-${{ matrix.dependencies }}-composer-${{ hashFiles('**/composer.json') }}
+          key: ${{ runner.os }}-php${{ matrix.php-versions }}-${{ matrix.dependencies }}-composer-${{ hashFiles('composer.json') }}
           restore-keys: ${{ runner.os }}-php${{ matrix.php-versions }}-${{ matrix.dependencies }}-composer-
 
       - name: Install Composer dependencies
@@ -79,13 +134,97 @@ jobs:
         run: composer unittest
 
       - name: Measure coverage
-        if: matrix.php-versions == '8.3' && matrix.dependencies == 'highest'
+        if: matrix.php-versions == env.PHP_VERSION && matrix.dependencies == 'highest'
         env:
           XDEBUG_MODE: coverage
         run: |
           composer coverage
           # Raise this floor as the suite grows; never lower it to make a red build green.
-          php tests/test_tools/check-coverage.php build/logs/clover.xml 90
+          php tests/test_tools/check-coverage.php build/logs/clover.xml 97
+
+  # The OS jobs run the full check where the Linux matrix cannot: a case-insensitive
+  # filesystem and Windows paths. They have SQLite only; the MySQL and PostgreSQL tests skip
+  # here and are required on the Linux matrix above.
+  macos:
+    name: Extension OS (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout extension
+        uses: actions/checkout@v7
+
+      - name: Setup PHP, with composer and extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: ctype, dom, intl, json, mbstring, pcre, pdo, pdo_sqlite, sqlite3, spl, zlib
+          tools: cs2pr
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dependencies
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Full check (composer fulltest)
+        run: composer fulltest
+
+  windows:
+    name: Extension OS (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Configure git for LF line endings
+        run: git config --global core.autocrlf false
+
+      - name: Checkout extension
+        uses: actions/checkout@v7
+
+      - name: Setup PHP, with composer and extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: ctype, dom, intl, json, mbstring, pcre, pdo, pdo_sqlite, sqlite3, spl, zlib
+          tools: cs2pr
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dependencies
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      # Composer runs its scripts through cmd.exe on Windows, where the `composer lint`
+      # pipeline's find and xargs are not the POSIX ones; the same pipeline runs here in bash.
+      - name: Compile check (composer lint)
+        run: find src tests -name '*.php' -print0 | xargs -0 -n1 php -d display_errors=stderr -l > /dev/null
+
+      - name: Validate code style using php-cs-fixer (composer cs)
+        run: vendor/bin/php-cs-fixer fix -vvv --dry-run --using-cache=no --format=checkstyle | cs2pr
+
+      - name: Validate code using phpstan (composer stan)
+        run: vendor/bin/phpstan analyse --memory-limit=512M --error-format=checkstyle | cs2pr
+
+      - name: Run Unit Tests (composer unittest)
+        run: composer unittest
 
   integration:
     name: Composer extension install
@@ -93,12 +232,12 @@ jobs:
 
     steps:
       - name: Checkout extension
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: prado-meta
 
       - name: Checkout PRADO framework (4.4 dev)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: pradosoft/prado
           ref: master
@@ -107,7 +246,7 @@ jobs:
       - name: Setup PHP, with composer and extensions
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          php-version: ${{ env.PHP_VERSION }}
           extensions: ctype, dom, intl, json, mbstring, pcre, pdo, pdo_sqlite, sqlite3, spl, zlib
 
       # Builds a throwaway consumer project that requires the extension through Composer, then

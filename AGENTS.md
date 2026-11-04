@@ -27,14 +27,17 @@ order. All four must pass before code is ready to commit.**
 ## Architecture
 
 ```
-src/TEntityMetaModule.php   the example bootstrap module (TPluginModule)
-src/Pages/Example.page     a page the module mounts on the page service
+src/TEntityMetaModule.php  keyed, typed meta storage for one entity type (a TDbModule)
+src/TUserMetaModule.php    the bootstrap module: TEntityMetaModule on user_meta, attaching TMetaBehavior
+src/TMetaBehavior.php      the class behavior that gives every IUser getMeta()/setMeta()/...
 config/classes.json        Prado3 short name => FQN, registered by extra.prado.class-map
 config/errorMessages.txt   message code => text, registered by extra.prado.error-messages
 tests/unit/Package/        the package standard checks, inherited by every extension
+tests/unit/*DriverTest.php the module on SQLite, and on PostgreSQL and MySQL when META_*_DSN is set
 tests/integration/         installs the package into a throwaway consumer and checks the wiring
-tests/test_tools/          phpunit and phpstan bootstraps, the coverage floor check
-agents/                    working files for coding agents
+tests/test_tools/          phpunit and phpstan bootstraps, test doubles, the coverage floor check
+tests/initdb_mysql.sql     creates a local MySQL database for the driver tests
+agents/                    working files for coding agents (audits, notes)
 ```
 
 ## Invariants
@@ -99,6 +102,11 @@ The framework is at `vendor/pradosoft/prado/`, with its own `AGENTS.md`. What ma
 - New code ships with unit tests covering typical cases, edge cases, and error paths.
 - Tests are isolated: no shared state between them.
 - When working on one class or cluster, run only those tests with `--filter`.
+- SQL that differs by driver is tested in `TEntityMetaModuleDriverTest` against every backend.
+  Set `META_PGSQL_DSN`/`_USER`/`_PASSWORD` and `META_MYSQL_DSN`/`_USER`/`_PASSWORD` to run the
+  PostgreSQL and MySQL legs locally; CI runs both with `META_REQUIRE_BACKENDS=1`.
+- A `TEntityMetaModule` closes its connection when it is destroyed (`TDbPropertiesTrait`), so a
+  test keeps every module that shares a connection alive until it is done.
 
 ## Safeguards -- ANTI-PATTERNS
 

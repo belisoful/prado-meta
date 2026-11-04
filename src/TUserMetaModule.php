@@ -48,15 +48,37 @@ class TUserMetaModule extends TEntityMetaModule
 	/** @var string the column holding the user */
 	private string $_entityIdField = 'user_id';
 
+	/** @var array<string, \Belisoful\Prado\Util\Meta\TMetaBehavior> lowercase behavior name => the behavior a module of this class attached */
+	private static array $_attachedBehaviors = [];
+
 	/**
 	 * Initializes the module and gives every user the meta methods.
+	 *
+	 * The behavior is attached to {@see \Prado\Security\IUser} for the whole process. A module
+	 * initialized again under the same {@see setBehaviorName BehaviorName} -- a second instance,
+	 * or the application booted again in a long-running process -- replaces the behavior the
+	 * earlier one attached, so the last module initialized serves users under that name. A
+	 * behavior of that name that some other code attached is left alone, and attaching fails.
 	 * @param null|array|\Prado\Xml\TXmlElement $config the module configuration
+	 * @throws \Prado\Exceptions\TInvalidOperationException when another behavior has the name.
 	 */
 	public function init($config)
 	{
 		parent::init($config);
 
-		TComponent::attachClassBehavior($this->getBehaviorName(), new TMetaBehavior($this), IUser::class);
+		$name = strtolower($this->getBehaviorName());
+		if (isset(self::$_attachedBehaviors[$name])) {
+			$previous = TComponent::detachClassBehavior($name, IUser::class);
+			if ($previous !== null && $previous !== self::$_attachedBehaviors[$name]) {
+				// Not ours: the name was reused after ours was detached. Put it back, and let
+				// the attach below report the conflict.
+				TComponent::attachClassBehavior($name, $previous, IUser::class);
+			}
+			unset(self::$_attachedBehaviors[$name]);
+		}
+		$behavior = new TMetaBehavior($this);
+		TComponent::attachClassBehavior($name, $behavior, IUser::class);
+		self::$_attachedBehaviors[$name] = $behavior;
 	}
 
 	/**

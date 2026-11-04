@@ -8,7 +8,6 @@ use PhpCsFixer\Finder;
 $finder = PhpCsFixer\Finder::create()
 	->exclude('.git/')
 	->exclude('docs/')
-	->exclude('tests/')
 	->exclude('vendor/')
 	->in(__DIR__);
 

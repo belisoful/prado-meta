@@ -8,7 +8,6 @@
  * PHPUnit can report coverage but cannot enforce a floor, so CI calls this after the coverage
  * run. Set the floor just below what the suite actually reaches, and raise it as tests land.
  */
-
 $file = $argv[1] ?? '';
 $minimum = (float) ($argv[2] ?? 0);
 if ($file === '' || !is_file($file)) {
