@@ -24,3 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one, so they survive a rename, and on the user name otherwise.
 - Upserts on MySQL, SQLite, and PostgreSQL, with a delete-then-insert fallback for any other
   driver.
+- The table and column properties of `TEntityMetaModule` and `TUserMetaModule` are SQL
+  identifiers; their setters reject any other value, as PRADO's `TDbParameterModule` does.
+
+### Changed
+
+- PHP 8.2 is the minimum. PRADO `master`, which the package tracks, requires PHP 8.2, so
+  `pradosoft/prado ^4.4@dev` no longer installs on 8.1. CI runs PHP 8.2 to 8.5, and
+  `php-cs-fixer` and `phpstan` are pinned to the versions the framework pins (3.95.27, 2.3.3).
+- Error messages are ICU MessageFormat patterns, as PRADO now formats them. A quoted argument is
+  written `''{0}''`; the single-quoted `'{0}'` rendered the literal `{0}`. A package standard
+  check formats each message and fails on an argument it does not render.

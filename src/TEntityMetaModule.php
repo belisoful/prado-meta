@@ -45,6 +45,9 @@ use Prado\Util\Traits\TInitializedTrait;
  * time it is asked for and none afterwards. With `AutoLoadField` set to '', the first read loads
  * all of the entity's rows, and no key ever costs a second query.
  *
+ * The table and column properties are SQL identifiers, written into the queries as given, so
+ * their setters reject any other value, as {@see \Prado\Util\TDbParameterModule}'s do.
+ *
  * This is storage, not session state. What is written here persists until it is removed, and has
  * nothing to do with {@see \Prado\Security\TUser::getState()}, which holds session data that is
  * discarded at logout.
@@ -140,11 +143,12 @@ class TEntityMetaModule extends TDbModule
 	/**
 	 * @param string $value the table holding the meta rows
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setTableName($value): void
 	{
 		$this->assertUninitialized('TableName');
-		$this->_tableName = TPropertyValue::ensureString($value);
+		$this->_tableName = $this->ensureSqlIdentifier(TPropertyValue::ensureString($value), 'TableName');
 	}
 
 	/**
@@ -158,11 +162,12 @@ class TEntityMetaModule extends TDbModule
 	/**
 	 * @param string $value the column holding the entity the row belongs to
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setEntityIdField($value): void
 	{
 		$this->assertUninitialized('EntityIdField');
-		$this->_entityIdField = TPropertyValue::ensureString($value);
+		$this->_entityIdField = $this->ensureSqlIdentifier(TPropertyValue::ensureString($value), 'EntityIdField');
 	}
 
 	/**
@@ -176,11 +181,12 @@ class TEntityMetaModule extends TDbModule
 	/**
 	 * @param string $value the column holding the key
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setKeyField($value): void
 	{
 		$this->assertUninitialized('KeyField');
-		$this->_keyField = TPropertyValue::ensureString($value);
+		$this->_keyField = $this->ensureSqlIdentifier(TPropertyValue::ensureString($value), 'KeyField');
 	}
 
 	/**
@@ -194,11 +200,12 @@ class TEntityMetaModule extends TDbModule
 	/**
 	 * @param string $value the column holding the value
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setValueField($value): void
 	{
 		$this->assertUninitialized('ValueField');
-		$this->_valueField = TPropertyValue::ensureString($value);
+		$this->_valueField = $this->ensureSqlIdentifier(TPropertyValue::ensureString($value), 'ValueField');
 	}
 
 	/**
@@ -214,11 +221,13 @@ class TEntityMetaModule extends TDbModule
 	 * an existing table that has no such column.
 	 * @param string $value the column holding the type code
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setTypeField($value): void
 	{
 		$this->assertUninitialized('TypeField');
-		$this->_typeField = TPropertyValue::ensureString($value);
+		$value = TPropertyValue::ensureString($value);
+		$this->_typeField = $value === '' ? '' : $this->ensureSqlIdentifier($value, 'TypeField');
 	}
 
 	/**
@@ -234,11 +243,13 @@ class TEntityMetaModule extends TDbModule
 	 * first read, which suits an entity with few rows.
 	 * @param string $value the column holding the autoload flag
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setAutoLoadField($value): void
 	{
 		$this->assertUninitialized('AutoLoadField');
-		$this->_autoLoadField = TPropertyValue::ensureString($value);
+		$value = TPropertyValue::ensureString($value);
+		$this->_autoLoadField = $value === '' ? '' : $this->ensureSqlIdentifier($value, 'AutoLoadField');
 	}
 
 	/**

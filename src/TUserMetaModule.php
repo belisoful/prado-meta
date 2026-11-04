@@ -70,11 +70,12 @@ class TUserMetaModule extends TEntityMetaModule
 	/**
 	 * @param string $value the table holding user meta
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setTableName($value): void
 	{
 		$this->assertUninitialized('TableName');
-		$this->_tableName = TPropertyValue::ensureString($value);
+		$this->_tableName = $this->ensureSqlIdentifier(TPropertyValue::ensureString($value), 'TableName');
 	}
 
 	/**
@@ -88,11 +89,12 @@ class TUserMetaModule extends TEntityMetaModule
 	/**
 	 * @param string $value the column holding the user
 	 * @throws \Prado\Exceptions\TInvalidOperationException when the module is already initialized.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when $value is not an SQL identifier.
 	 */
 	public function setEntityIdField($value): void
 	{
 		$this->assertUninitialized('EntityIdField');
-		$this->_entityIdField = TPropertyValue::ensureString($value);
+		$this->_entityIdField = $this->ensureSqlIdentifier(TPropertyValue::ensureString($value), 'EntityIdField');
 	}
 
 	/**

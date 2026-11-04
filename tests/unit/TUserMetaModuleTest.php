@@ -1,6 +1,7 @@
 <?php
 
 use Belisoful\Prado\Util\Meta\TMetaBehavior;
+use Prado\Exceptions\TInvalidDataValueException;
 use Prado\Security\IUser;
 use Prado\Security\TUser;
 use Prado\TComponent;
@@ -24,6 +25,19 @@ class TUserMetaModuleTest extends PHPUnit\Framework\TestCase
 			}
 		}
 		$this->_attached = [];
+	}
+
+	public function testTableAndEntityColumnMustBeSqlIdentifiers()
+	{
+		foreach (['TableName', 'EntityIdField'] as $property) {
+			$module = new TestUserMetaModule();
+			try {
+				$module->{'set' . $property}('user meta');
+				$this->fail("{$property} accepted a value that is not an SQL identifier");
+			} catch (TInvalidDataValueException $e) {
+				$this->assertStringContainsString("'user meta'", $e->getMessage());
+			}
+		}
 	}
 
 	/**

@@ -26,7 +26,45 @@ class TEntityMetaModuleTest extends PHPUnit\Framework\TestCase
 	{
 		$module = new TestEntityMetaModule();
 		$this->expectException(TInvalidDataValueException::class);
+		$this->expectExceptionMessage("'yaml' is not a meta serializer");
 		$module->setSerializer('yaml');
+	}
+
+	/**
+	 * The table and columns are written into every query as given, so a value that is not an SQL
+	 * identifier would be SQL of the caller's choosing.
+	 */
+	public function testTableAndColumnsMustBeSqlIdentifiers()
+	{
+		foreach (['TableName', 'EntityIdField', 'KeyField', 'ValueField', 'TypeField', 'AutoLoadField'] as $property) {
+			$module = new TestEntityMetaModule();
+			try {
+				$module->{'set' . $property}('meta; DROP TABLE users');
+				$this->fail("{$property} accepted a value that is not an SQL identifier");
+			} catch (TInvalidDataValueException $e) {
+				$this->assertStringContainsString("'meta; DROP TABLE users'", $e->getMessage());
+			}
+		}
+	}
+
+	public function testTableAndColumnsAcceptQualifiedAndQuotedIdentifiers()
+	{
+		$module = new TestEntityMetaModule();
+		$module->setTableName('app.post_meta');
+		$module->setKeyField('"meta key"');
+		$module->setValueField('`meta_value`');
+		$this->assertSame('app.post_meta', $module->getTableName());
+		$this->assertSame('"meta key"', $module->getKeyField());
+		$this->assertSame('`meta_value`', $module->getValueField());
+	}
+
+	public function testTypeAndAutoLoadFieldsMayBeEmpty()
+	{
+		$module = new TestEntityMetaModule();
+		$module->setTypeField('');
+		$module->setAutoLoadField('');
+		$this->assertSame('', $module->getTypeField());
+		$this->assertSame('', $module->getAutoLoadField());
 	}
 
 	public function testTableAndColumnsFreezeOnceInitialized()
@@ -49,6 +87,7 @@ class TEntityMetaModuleTest extends PHPUnit\Framework\TestCase
 	{
 		$module = MetaTestTools::createEntityModule(['AutoCreateTable' => false]);
 		$this->expectException(TConfigurationException::class);
+		$this->expectExceptionMessage("The meta table 'entity_meta' does not exist");
 		$module->getMeta('7', 'colour');
 	}
 
@@ -259,6 +298,7 @@ class TEntityMetaModuleTest extends PHPUnit\Framework\TestCase
 	{
 		$module = MetaTestTools::createEntityModule();
 		$this->expectException(TInvalidDataValueException::class);
+		$this->expectExceptionMessage("Meta storage in 'entity_meta' requires a non-empty entity id.");
 		$module->getMeta('', 'colour');
 	}
 
@@ -266,6 +306,7 @@ class TEntityMetaModuleTest extends PHPUnit\Framework\TestCase
 	{
 		$module = MetaTestTools::createEntityModule();
 		$this->expectException(TInvalidDataValueException::class);
+		$this->expectExceptionMessage("Meta storage in 'entity_meta' requires a non-empty key.");
 		$module->setMeta('7', '', 'green');
 	}
 
