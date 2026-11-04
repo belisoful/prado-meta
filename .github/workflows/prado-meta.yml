@@ -209,8 +209,11 @@ jobs:
           key: ${{ runner.os }}-composer-${{ hashFiles('composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
 
+      # phpdocumentor/shim, the only Composer plugin, downloads phpDocumentor.phar on install
+      # and verifies its signature with GnuPG, which cannot import the key on the Windows
+      # runner. Nothing here runs phpDocumentor, so the plugin is skipped.
       - name: Install Composer dependencies
-        run: composer install --no-progress --prefer-dist --optimize-autoloader
+        run: composer install --no-progress --prefer-dist --optimize-autoloader --no-plugins
 
       # Composer runs its scripts through cmd.exe on Windows, where the `composer lint`
       # pipeline's find and xargs are not the POSIX ones; the same pipeline runs here in bash.
